@@ -114,9 +114,19 @@ def add_cors_headers(response):
 @app.route("/api/health", methods=["GET"])
 def health():
     # Endpoint de prueba.
-    # Sirve para confirmar rapido que Flask esta vivo.
-    # No consulta base de datos.
-    return json_response({"ok": True, "message": "API de Calcifer3D activa"})
+    # Sirve para confirmar rapido que Flask esta vivo y comprobar la base de datos.
+    db_status = "desconectado"
+    try:
+        initialize_system()
+        db_status = "conectado"
+    except Exception as exc:
+        db_status = f"error: {exc}"
+
+    return json_response({
+        "ok": True,
+        "message": "API de Calcifer3D activa",
+        "database": db_status
+    })
 
 
 @app.route("/api/productos", methods=["GET"])
@@ -771,7 +781,7 @@ if __name__ == "__main__":
     # Punto de entrada del servidor Flask.
     # Se usa al ejecutar: python backend_python/app.py
     app.run(
-        host=os.getenv("FLASK_HOST", "127.0.0.1"),
-        port=int(os.getenv("FLASK_PORT", "5000")),
-        debug=os.getenv("FLASK_DEBUG", "true").lower() == "true",
+        host=os.getenv("FLASK_HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", os.getenv("FLASK_PORT", "5000"))),
+        debug=os.getenv("FLASK_DEBUG", "false").lower() == "true",
     )
