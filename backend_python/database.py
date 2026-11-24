@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import mysql.connector
 from mysql.connector import Error
@@ -13,49 +14,100 @@ PROJECT_DIR = BASE_DIR.parent
 SQL_SCHEMA_PATH = PROJECT_DIR / "database" / "calcifer3d.sql"
 
 
+def get_env_case_insensitive(*names: str, default: str | None = None) -> str | None:
+    """Busca variables de entorno ignorando mayúsculas/minúsculas y espacios en blanco."""
+    upper_env = {k.strip().upper(): v.strip() for k, v in os.environ.items() if v}
+    for name in names:
+        key = name.strip().upper()
+        if key in upper_env and upper_env[key]:
+            return upper_env[key]
+    return default
+
+
+def parse_mysql_uri(uri: str) -> dict[str, object] | None:
+    """
+    Parsea una URI de conexión MySQL como:
+    mysql://usuario:password@host:3306/nombre_db
+    Soporta contraseñas con caracteres especiales y comillas.
+    """
+    cleaned = uri.strip().strip("'\"")
+    if not cleaned.startswith("mysql://"):
+        return None
+
+    # Intentar con expresión regular primero (soporta @ en la contraseña)
+    match = re.match(r"^mysql://([^:]+):(.*)@([^:/]+)(?::(\d+))?/(.+)$", cleaned)
+    if match:
+        user, password, host, port_str, db_part = match.groups()
+        db_name = db_part.split("?")[0]
+        return {
+            "host": host,
+            "port": int(port_str) if port_str else 3306,
+            "user": unquote(user),
+            "password": unquote(password),
+            "database": db_name,
+        }
+
+    # Fallback con urlparse
+    parsed = urlparse(cleaned)
+    db_name = parsed.path.lstrip("/").split("?")[0] if parsed.path else "calcifer3d"
+    return {
+        "host": parsed.hostname or "127.0.0.1",
+        "port": parsed.port or 3306,
+        "user": unquote(parsed.username) if parsed.username else "root",
+        "password": unquote(parsed.password) if parsed.password else "",
+        "database": db_name,
+    }
+
+
 def get_db_config(include_database: bool = True) -> dict[str, object]:
     """
     Obtiene la configuración de conexión a MySQL.
     Soporta:
     1. URIs completas: MYSQL_ADDON_URI (Clever Cloud), MYSQL_URL o DATABASE_URL
-    2. Variables de Clever Cloud: MYSQL_ADDON_HOST, MYSQL_ADDON_PORT, MYSQL_ADDON_USER, MYSQL_ADDON_PASSWORD, MYSQL_ADDON_DB
-    3. Variables estándar: MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
+    2. Variables directas: MYSQL_HOST, MYSQL_ADDON_HOST, MYSQLHOST, DB_HOST
+    3. Variables estándar e insensibles a mayúsculas
     4. Valores por defecto locales (127.0.0.1:3306, root, calcifer3d)
     """
-    uri = (
-        os.getenv("MYSQL_ADDON_URI")
-        or os.getenv("MYSQL_URL")
-        or os.getenv("DATABASE_URL")
-    )
+    uri = get_env_case_insensitive("MYSQL_ADDON_URI", "MYSQL_URL", "DATABASE_URL")
     if uri:
-        parsed = urlparse(uri)
-        config: dict[str, object] = {
-            "host": parsed.hostname or "127.0.0.1",
-            "port": parsed.port or 3306,
-            "user": parsed.username or "root",
-            "password": parsed.password or "",
-            "connection_timeout": int(os.getenv("MYSQL_TIMEOUT", "10")),
-        }
-        if include_database:
-            db_name = parsed.path.lstrip("/") if parsed.path else "calcifer3d"
-            config["database"] = db_name
-        return config
+        parsed_config = parse_mysql_uri(uri)
+        if parsed_config and parsed_config.get("host"):
+            config: dict[str, object] = {
+                "host": parsed_config["host"],
+                "port": parsed_config.get("port", 3306),
+                "user": parsed_config.get("user", "root"),
+                "password": parsed_config.get("password", ""),
+                "connection_timeout": int(get_env_case_insensitive("MYSQL_TIMEOUT", default="15") or 15),
+            }
+            if include_database:
+                config["database"] = parsed_config.get("database", "calcifer3d")
+            return config
 
-    host = os.getenv("MYSQL_HOST") or os.getenv("MYSQL_ADDON_HOST") or "127.0.0.1"
-    port = int(os.getenv("MYSQL_PORT") or os.getenv("MYSQL_ADDON_PORT") or "3306")
-    user = os.getenv("MYSQL_USER") or os.getenv("MYSQL_ADDON_USER") or "root"
-    password = os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQL_ADDON_PASSWORD") or ""
-    database = os.getenv("MYSQL_DATABASE") or os.getenv("MYSQL_ADDON_DB") or "calcifer3d"
+    host = get_env_case_insensitive(
+        "MYSQL_HOST", "MYSQL_ADDON_HOST", "MYSQLHOST", "DB_HOST", default="127.0.0.1"
+    )
+    port_str = get_env_case_insensitive(
+        "MYSQL_PORT", "MYSQL_ADDON_PORT", "MYSQLPORT", "DB_PORT", default="3306"
+    )
+    user = get_env_case_insensitive(
+        "MYSQL_USER", "MYSQL_ADDON_USER", "MYSQLUSER", "DB_USER", default="root"
+    )
+    password = get_env_case_insensitive(
+        "MYSQL_PASSWORD", "MYSQL_ADDON_PASSWORD", "MYSQLPASSWORD", "DB_PASSWORD", default=""
+    )
+    database = get_env_case_insensitive(
+        "MYSQL_DATABASE", "MYSQL_ADDON_DB", "MYSQLDATABASE", "DB_NAME", default="calcifer3d"
+    )
 
     config: dict[str, object] = {
-        "host": host,
-        "port": port,
-        "user": user,
-        "password": password,
-        "connection_timeout": int(os.getenv("MYSQL_TIMEOUT", "10")),
+        "host": host or "127.0.0.1",
+        "port": int(port_str or 3306),
+        "user": user or "root",
+        "password": password or "",
+        "connection_timeout": int(get_env_case_insensitive("MYSQL_TIMEOUT", default="15") or 15),
     }
     if include_database:
-        config["database"] = database
+        config["database"] = database or "calcifer3d"
     return config
 
 
@@ -114,7 +166,6 @@ def bootstrap_database() -> None:
             pass
 
     # Conectar directamente a la base de datos asignada y ejecutar el esquema
-    # Se filtran CREATE DATABASE y USE para no fallar en nubes (Clever Cloud) con usuarios restringidos
     with get_connection(include_database=True) as connection:
         with connection.cursor() as cursor:
             sql_script = SQL_SCHEMA_PATH.read_text(encoding="utf-8")

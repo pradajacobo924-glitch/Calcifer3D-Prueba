@@ -262,3 +262,4 @@ SELECT 'Comprador' WHERE NOT EXISTS (SELECT 1 FROM roles WHERE nombre = 'Comprad
 
 INSERT INTO roles (nombre)
 SELECT 'Contador' WHERE NOT EXISTS (SELECT 1 FROM roles WHERE nombre = 'Contador');
+
