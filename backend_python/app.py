@@ -741,6 +741,12 @@ def listar_proveedores():
         )
 
 
+@app.route("/backend_python/static/uploads/productos/<path:filename>")
+def uploaded_product_image(filename):
+    # Ruta directa para servir fotografías de productos subidas al servidor
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
+
 @app.route("/")
 def root():
     # Ruta principal del proyecto.
